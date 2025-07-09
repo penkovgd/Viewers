@@ -1,4 +1,4 @@
-import { utils } from '@ohif/core';
+import { DicomMetadataStore, utils } from '@ohif/core';
 
 export default function getCommandsModule({ servicesManager, commandsManager, extensionManager }) {
   const { measurementService } = servicesManager.services;
@@ -27,6 +27,17 @@ export default function getCommandsModule({ servicesManager, commandsManager, ex
 
         const result = await response.json();
         console.log('Server response:', result);
+
+        const StudyInstanceUID = result.json.measurements[0].referenceStudyUID;
+
+        // Получаем метаданные study от DicomMetadataStore
+        const studyMetadata = DicomMetadataStore.getStudy(StudyInstanceUID);
+        console.log('Study metada from DicomMetadataStore:', studyMetadata);
+
+        // Получаем метаданные от dataSource
+        const dataSource = extensionManager.getActiveDataSource()[0];
+        const seriesMetadata = await dataSource.retrieve.series.metadata({ StudyInstanceUID });
+        console.log('Series Metadata from dataSource:', seriesMetadata);
       } catch (err) {
         console.error('Falied to send measurements:', err);
       }

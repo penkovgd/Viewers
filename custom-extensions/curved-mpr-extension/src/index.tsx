@@ -2,6 +2,7 @@ import React from 'react';
 import { id } from './id';
 import getCommandsModule from './getCommandsModule';
 import CurvedMprSidePanelComponent from './components/CurvedMprSidePanelComponent';
+import { IWebApiDataSource } from '@ohif/core';
 
 /**
  * You can remove any of the following modules if you don't need them.
@@ -94,5 +95,32 @@ export default {
    * DataSources can be used to map the external data formats to the OHIF's
    * native format. DataSources are defined by an object of { name, type, createDataSource }.
    */
-  getDataSourcesModule: ({ servicesManager, commandsManager, extensionManager }) => {},
+  getDataSourcesModule: ({ servicesManager, commandsManager, extensionManager }) => {
+    // return [
+    //   {
+    //     name: 'fastapiDataSource',
+    //     type: 'webApi', // 'webApi' | 'local' | 'other'
+    //     createDataSource: createMprSource,
+    //     configuration: {
+    //       generateEndpoint: 'http://localhost:8000/generate_mpr',
+    //     },
+    //   },
+    // ];
+  },
 };
+
+// function createMprSource(config) {
+//   const base = IWebApiDataSource.create({
+//     store: {
+//       dicom: async data => {
+//         const resp = await fetch(config.generateEndpoint, {
+//           method: 'POST',
+//           headers: { 'Content-Type': 'application/json' },
+//           body: JSON.stringify(data),
+//         });
+//         return resp; // OHIF ожидает DICOM-файл
+//       },
+//     },
+//   });
+//   return base;
+// }

@@ -15,9 +15,24 @@ export default function getCommandsModule({ servicesManager, commandsManager, ex
       // return;
       // }
 
-      const StudyInstanceUID = '1.3.12.2.1107.5.1.4.76270.30000024122810361969400000019';
-      // const SeriesInstanceUID = '1.3.12.2.1107.5.1.4.76270.30000024122810150182600001560'; // малленкая серия (1 инстанс)
-      const SeriesInstanceUID = '1.3.12.2.1107.5.1.4.76270.30000024122810501260100009281'; // большая серия (800 инстансов)
+      // Проверяем, чтобы у всех measurements был одинаковый StudyUID и SeriesUID
+      const studyUIDs = new Set(measurementData.map(m => m.referenceStudyUID));
+      const seriesUIDs = new Set(measurementData.map(m => m.referenceSeriesUID));
+
+      if (studyUIDs.size !== 1) {
+        throw new Error(`Inconsistent referenceStudyUID values: ${[...studyUIDs].join(', ')}`);
+      }
+      if (seriesUIDs.size !== 1) {
+        throw new Error(`Inconsistent referenceSeriesUID values: ${[...seriesUIDs].join(', ')}`);
+      }
+
+      const [StudyInstanceUID] = studyUIDs;
+      const [SeriesInstanceUID] = seriesUIDs;
+
+      // const StudyInstanceUID = '1.3.12.2.1107.5.1.4.76270.30000024122810361969400000019';
+      // const SeriesInstanceUID = '1.3.12.2.1107.5.1.4.76270.30000024122810150182600001696'; // малленкая серия (1 инстанс)
+      // const SeriesInstanceUID = '1.3.12.2.1107.5.1.4.76270.30000024122810501260100009281'; // большая серия (800 инстансов)
+      // const SeriesInstanceUID = '1.3.12.2.1107.5.8.15.133421.30000024122816392585900000071'; // MIP Range
       const dataSource = extensionManager.getActiveDataSource()[0];
       const series = await dataSource.retrieve.series.metadata({ StudyInstanceUID });
       const SeriesRetrieveURL = series.find(
@@ -42,17 +57,14 @@ export default function getCommandsModule({ servicesManager, commandsManager, ex
         const formData = new FormData();
 
         // Добавляем zip в тело запроса
-        formData.append('dicom_series', zipBlob, 'series.zip');
+        formData.append('file', zipBlob, 'series.zip');
 
         // Добавляем точки в тело запроса
-        formData.append(
-          'measurements',
-          JSON.stringify(JSON.stringify({ measurements: measurementData }))
-        );
+        formData.append('measurements', JSON.stringify(measurementData));
 
         // https://httpbin.org/post
         // http://127.0.0.1:8000/generate_mpr/
-        const response = await fetch('http://127.0.0.1:8000/generate_mpr/', {
+        const response = await fetch('http://127.0.0.1:8000/reconstruct', {
           method: 'POST',
           body: formData,
         });
@@ -60,13 +72,14 @@ export default function getCommandsModule({ servicesManager, commandsManager, ex
           throw new Error(`Backend error: ${response.status} ${response.statusText}`);
         }
 
-        // Сохраняем abc.dcm от бекенда
-        const arrayBuffer = await response.arrayBuffer();
-        await dataSource.store.dicom(arrayBuffer);
-
-        const promiseId = 'DCM4CHEE:1.3.12.2.1107.5.1.4.76270.30000024122810361969400000019'; // хардкод
+        const promiseId = 'DCM4CHEE:' + StudyInstanceUID; // пересмотреть
         dataSource.deleteStudyMetadataPromise(promiseId);
-        const instances = await dataSource.retrieve.series.metadata({ StudyInstanceUID });
+
+        // Сохраняем .dcm от бекенда
+        const arrayBuffer = await response.arrayBuffer();
+        await dataSource.store.dicom(arrayBuffer); // ничего не возвращает, к сожалению
+
+        const series = await dataSource.retrieve.series.metadata({ StudyInstanceUID });
         console.log('ok');
       } catch (error) {
         console.error('Fetch operation failed:', error);

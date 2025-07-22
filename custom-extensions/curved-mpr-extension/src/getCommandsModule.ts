@@ -1,19 +1,24 @@
-import { DicomMetadataStore, utils } from '@ohif/core';
+import { utils } from '@ohif/core';
 
 export default function getCommandsModule({ servicesManager, commandsManager, extensionManager }) {
-  const { displaySetService, measurementService } = servicesManager.services;
+  const { measurementService, uiNotificationService } = servicesManager.services;
   const actions = {
     sendMeasurments: async () => {
       const { filterTool } = utils.MeasurementFilters;
       const measurementData = measurementService.getMeasurements(filterTool('Probe'));
       console.log('Got measurments:', measurementData);
 
-      // Для скорости тестирования убрал эту проверку
-      // if (measurementData.length < 2) {
-      // throw new Error('At least 2 points required');
-      // console.error('At least 2 points required');
-      // return;
-      // }
+      const POINTS_REQUIRED = 4;
+      if (measurementData.length < POINTS_REQUIRED) {
+        // throw new Error(`At least ${POINTS_REQUIRED} points required`);
+        uiNotificationService.show({
+          title: 'Sending point failed:',
+          message: `At least ${POINTS_REQUIRED} points required`,
+          type: 'error',
+        });
+        console.error(`At least ${POINTS_REQUIRED} points required`);
+        return;
+      }
 
       // Проверяем, чтобы у всех measurements был одинаковый StudyUID и SeriesUID
       const studyUIDs = new Set(measurementData.map(m => m.referenceStudyUID));
@@ -35,13 +40,20 @@ export default function getCommandsModule({ servicesManager, commandsManager, ex
       // const SeriesInstanceUID = '1.3.12.2.1107.5.8.15.133421.30000024122816392585900000071'; // MIP Range
       const dataSource = extensionManager.getActiveDataSource()[0];
       const series = await dataSource.retrieve.series.metadata({ StudyInstanceUID });
-      const SeriesRetrieveURL = series.find(
-        s => s.SeriesInstanceUID === SeriesInstanceUID
-      ).RetrieveURL;
-      console.log(SeriesRetrieveURL); // http://localhost:8080/dcm4chee-arc/aets/DCM4CHEE/rs/studies/1.3.12.2.1107.5.1.4.76270.30000024122810361969400000019/series/1.3.12.2.1107.5.1.4.76270.30000024122810501260100009281?accept=application/zip
+
+      const wadoClient = dataSource.retrieve.getWadoDicomWebClient();
+      // const SeriesRetrieveURL = series.find(
+      //   s => s.SeriesInstanceUID === SeriesInstanceUID
+      // ).RetrieveURL;
+      // console.log(SeriesRetrieveURL); // http://localhost:8080/dcm4chee-arc/aets/DCM4CHEE/rs/studies/1.3.12.2.1107.5.1.4.76270.30000024122810361969400000019/series/1.3.12.2.1107.5.1.4.76270.30000024122810501260100009281?accept=application/zip
+      const SeriesRetrieveURL = `${wadoClient.wadoURL}/studies/${StudyInstanceUID}/series/${SeriesInstanceUID}`;
 
       try {
         // Получаем zip
+        uiNotificationService.show({
+          title: 'Fetching zip',
+          type: 'info',
+        });
         const zipResponse = await fetch(SeriesRetrieveURL + '?accept=application/zip', {
           method: 'GET',
           headers: {
@@ -64,6 +76,10 @@ export default function getCommandsModule({ servicesManager, commandsManager, ex
 
         // https://httpbin.org/post
         // http://127.0.0.1:8000/generate_mpr/
+        uiNotificationService.show({
+          title: 'Points sent to the server',
+          type: 'info',
+        });
         const response = await fetch('http://127.0.0.1:8000/reconstruct', {
           method: 'POST',
           body: formData,
@@ -80,59 +96,14 @@ export default function getCommandsModule({ servicesManager, commandsManager, ex
         await dataSource.store.dicom(arrayBuffer); // ничего не возвращает, к сожалению
 
         const series = await dataSource.retrieve.series.metadata({ StudyInstanceUID });
-        console.log('ok');
+
+        uiNotificationService.show({
+          title: 'Curved mrp saved',
+          type: 'info',
+        });
       } catch (error) {
         console.error('Fetch operation failed:', error);
       }
-
-      // DicomMetadataStore.addInstances(series);
-      // const series = await dataSource.query.series.search(StudyInstanceUID);
-      // DicomMetadataStore.addInstance(arrayBuffer);
-      // console.log('ok');
-
-      // Через filesToStudies
-      // const blob = await response.blob();
-      // const res = await filesToStudies([blob]);
-      // console.log('ok');
-
-      // const displaySets = displaySetService.getActiveDisplaySets();
-      // for (const ds of displaySets) {
-      //   displaySetService.setDisplaySetMetadataInvalidated(ds.displaySetInstanceUID);
-      // }
-
-      // // Получаем метаданные study от DicomMetadataStore
-      // const studyMetadata = DicomMetadataStore.getStudy(StudyInstanceUID);
-      // console.log('Study metada from DicomMetadataStore:', studyMetadata);
-
-      // // Получаем метаданные от dataSource
-
-      // Фетчим новые series
-      // const dataSource = extensionManager.getActiveDataSource()[0];
-      // console.log('datasource', dataSource);
-      // // current study qido
-      // const qidoForStudyUID = await dataSource.query.series.search(
-      //   '1.3.12.2.1107.5.1.4.76270.30000024122810361969400000019'
-      // );
-
-      // const study_1 = DicomMetadataStore.getStudy(StudyInstanceUID);
-      // DicomMetadataStore.addStudy('1.3.12.2.1107.5.1.4.76270.30000024122810361969400000019');
-      // DicomMetadataStore.addInstances([{ StudyInstanceUID, SeriesInstanceUID }], true);
-      // const study_2 = DicomMetadataStore.getStudy(
-      //   '1.3.12.2.1107.5.1.4.76270.30000024122810361969400000019'
-      // );
-      // console.log(study_1);
-
-      // try to fetch the prior studies based on the patientID if the
-      // server can respond.
-      // const mrn = qidoForStudyUID[0].mrn;
-
-      // await dataSource.query.studies.search({
-      //   patientId: mrn,
-      //   disableWildcard: true,
-      // });
-
-      // const seriesMetadata = await dataSource.retrieve.series.metadata({ StudyInstanceUID });
-      // console.log('Series Metadata from dataSource:', seriesMetadata);
     },
   };
   const definitions = {

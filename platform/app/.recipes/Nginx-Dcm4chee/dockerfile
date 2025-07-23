@@ -1,34 +1,37 @@
-# Stage 1: Build the application
-FROM node:20.18.1-slim as builder
+# syntax=docker/dockerfile:1.7-labs
 
-# Setup the working directory
+# Stage 1: build
+FROM node:20.18.1-slim AS builder
+
+RUN apt-get update && apt-get install -y build-essential python3
+
 RUN mkdir /usr/src/app
 WORKDIR /usr/src/app
 
-# Install dependencies
-# apt-get update is combined with apt-get install to avoid using outdated packages
-RUN apt-get update && apt-get install -y build-essential python3
+RUN npm install -g bun
+RUN npm install -g lerna@7.4.2
+ENV PATH=/usr/src/app/node_modules/.bin:$PATH
 
-# Copy package.json and other dependency-related files first
-# Assuming your package.json and yarn.lock or similar are located in the project root
+COPY package.json yarn.lock lerna.json preinstall.js ./
+COPY --parents ./addOns/package.json ./addOns/*/*/package.json ./extensions/*/package.json ./modes/*/package.json ./platform/*/package.json ./
+COPY platform/cli/package.json ./platform/cli/package.json
+COPY custom-extensions/curved-mpr-extension/package.json ./custom-extensions/curved-mpr-extension/package.json
+COPY modes/longitudinal/package.json ./modes/longitudinal/package.json
 
-COPY ./ /usr/src/app/
-
-# Install node dependencies
 RUN yarn config set workspaces-experimental true
 RUN yarn install
 
-# Copy the rest of the application code
+COPY . .
 
-# set QUICK_BUILD to true to make the build faster for dev
-ENV APP_CONFIG=config/docker-nginx-dcm4chee.js
 ENV QUICK_BUILD true
+# ENV GENERATE_SOURCEMAP=false
+ARG APP_CONFIG=config/docker-nginx-dcm4chee.js
+ARG PUBLIC_URL=/
+ENV PUBLIC_URL=${PUBLIC_URL}
 
-# ADD CUSTOM EXTENSIONS
 RUN yarn run cli link-extension ./custom-extensions/curved-mpr-extension
-
-# Build the application
 RUN yarn run build
+
 
 # # Stage 2: Bundle the built application into a Docker container which runs NGINX using Alpine Linux
 FROM nginx:alpine

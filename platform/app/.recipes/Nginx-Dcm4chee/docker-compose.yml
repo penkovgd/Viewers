@@ -71,3 +71,13 @@ services:
       - '443:443' # SSL
       - '80:80' # Web
     restart: on-failure
+  cmpr_backend:
+    build:
+      context: ./../../../../curved_mpr_backend
+      dockerfile: ./dockerfile
+    container_name: curved_mpr_backend
+    ports:
+      - "8000:80"
+    restart: on-failure
+    networks:
+      - default

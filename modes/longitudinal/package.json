@@ -43,7 +43,7 @@
     "@ohif/extension-dicom-pdf": "3.11.0-beta.72",
     "@ohif/extension-dicom-video": "3.11.0-beta.72",
     "@ohif/extension-measurement-tracking": "3.11.0-beta.72",
-    "curved-mpr-extension": "^0.0.1"
+    "curved-mpr-extension": "workspace:*"
   },
   "dependencies": {
     "@babel/runtime": "^7.20.13",

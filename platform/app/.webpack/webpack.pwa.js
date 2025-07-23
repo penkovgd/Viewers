@@ -84,6 +84,7 @@ module.exports = (env, argv) => {
           '/home/george/Viewers/custom-extensions/curved-mpr-extension/node_modules'
         ),
         path.resolve(__dirname, 'custom-extensions/curved-mpr-extension/node_modules'),
+        path.resolve(__dirname, 'custom-extensions/curved-mpr-extension/node_modules'),
       ],
     },
     plugins: [

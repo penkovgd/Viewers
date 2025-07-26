@@ -1,4 +1,4 @@
-import { utils } from '@ohif/core';
+import { DicomMetadataStore, utils } from '@ohif/core';
 
 export default function getCommandsModule({ servicesManager, commandsManager, extensionManager }) {
   const { measurementService, uiNotificationService } = servicesManager.services;
@@ -47,7 +47,7 @@ export default function getCommandsModule({ servicesManager, commandsManager, ex
       // ).RetrieveURL;
       // console.log(SeriesRetrieveURL); // http://localhost:8080/dcm4chee-arc/aets/DCM4CHEE/rs/studies/1.3.12.2.1107.5.1.4.76270.30000024122810361969400000019/series/1.3.12.2.1107.5.1.4.76270.30000024122810501260100009281?accept=application/zip
       // const SeriesRetrieveURL = `${wadoClient.wadoURL}/studies/${StudyInstanceUID}/series/${SeriesInstanceUID}`;
-      const SeriesRetrieveURL = `http://localhost:8080${wadoClient.wadoURL}/studies/${StudyInstanceUID}/series/${SeriesInstanceUID}`;
+      const SeriesRetrieveURL = `${window.location.origin}${wadoClient.wadoURL}/studies/${StudyInstanceUID}/series/${SeriesInstanceUID}`;
 
       try {
         // Получаем zip
@@ -81,21 +81,23 @@ export default function getCommandsModule({ servicesManager, commandsManager, ex
           title: 'Points sent to the server',
           type: 'info',
         });
-        const response = await fetch('http://127.0.0.1:8000/reconstruct', {
-          method: 'POST',
-          body: formData,
-        });
+        const response = await fetch(
+          `${window.location.protocol}//${window.location.hostname}:8000/reconstruct`,
+          {
+            method: 'POST',
+            body: formData,
+          }
+        );
         if (!response.ok) {
           throw new Error(`Backend error: ${response.status} ${response.statusText}`);
         }
-
-        const promiseId = 'DCM4CHEE:' + StudyInstanceUID; // пересмотреть
-        dataSource.deleteStudyMetadataPromise(promiseId);
 
         // Сохраняем .dcm от бекенда
         const arrayBuffer = await response.arrayBuffer();
         await dataSource.store.dicom(arrayBuffer); // ничего не возвращает, к сожалению
 
+        const promiseId = 'DCM4CHEE:' + StudyInstanceUID; // пересмотреть
+        dataSource.deleteStudyMetadataPromise(promiseId);
         const series = await dataSource.retrieve.series.metadata({ StudyInstanceUID });
 
         uiNotificationService.show({

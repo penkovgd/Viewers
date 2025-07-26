@@ -96,8 +96,8 @@ async def generate_mpr(file: UploadFile = File(...),
         points = [physical_to_voxel(c, spacing, origin, direction) for c in coords]
         points = [[pt[2], pt[1], pt[0]] for pt in points]
         new_img = curved_mpr(image_array, points, thickness=80)
-        ni = new_img*np.max(ds.pixel_array)/np.max(new_img)
-        ni = (ni+3547-np.max(ni))
+        ni = (new_img-np.min(new_img))/(np.max(new_img)-np.min(new_img))
+        ni = ni * np.max(ds.pixel_array)+500
         ni = ni.astype(np.int16)
         pydicom.pixels.set_pixel_data(ds, ni, photometric_interpretation='MONOCHROME2',
                                     bits_stored=16)
@@ -107,7 +107,6 @@ async def generate_mpr(file: UploadFile = File(...),
         # ds.SeriesInstanceUID = 'curvedmprseries'
         ds.SeriesInstanceUID = str(uuid.uuid4())
         ds.SeriesDescription = 'CMPR'
-        # ds.Modality = "OT"
         ds.save_as('abc3.dcm')
 
 

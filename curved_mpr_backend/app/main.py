@@ -15,7 +15,7 @@ from app.processing import change_spacing, physical_to_voxel, curved_mpr
 import numpy as np
 import uuid
 
-app = FastAPI()
+app = FastAPI(root_path="/api")
 
 # Add CORS middleware to allow cross-origin requests
 app.add_middleware(
@@ -34,6 +34,10 @@ def dataset_to_bytes(ds) -> bytes:
     dcmwrite(buffer, ds)
     buffer.seek(0)
     return buffer.getvalue()
+
+@app.get("/hello")
+def read_hello():
+    return {"Hello": "World"}
 
 @app.post("/reconstruct")
 async def generate_mpr(file: UploadFile = File(...),

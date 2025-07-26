@@ -79,5 +79,3 @@ services:
     ports:
       - "8000:80"
     restart: on-failure
-    networks:
-      - default

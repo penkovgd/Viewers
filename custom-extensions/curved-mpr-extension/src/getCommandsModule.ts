@@ -47,7 +47,7 @@ export default function getCommandsModule({ servicesManager, commandsManager, ex
       // ).RetrieveURL;
       // console.log(SeriesRetrieveURL); // http://localhost:8080/dcm4chee-arc/aets/DCM4CHEE/rs/studies/1.3.12.2.1107.5.1.4.76270.30000024122810361969400000019/series/1.3.12.2.1107.5.1.4.76270.30000024122810501260100009281?accept=application/zip
       // const SeriesRetrieveURL = `${wadoClient.wadoURL}/studies/${StudyInstanceUID}/series/${SeriesInstanceUID}`;
-      const SeriesRetrieveURL = `${window.location.origin}${wadoClient.wadoURL}/studies/${StudyInstanceUID}/series/${SeriesInstanceUID}`;
+      const SeriesRetrieveURL = `${wadoClient.wadoURL}/studies/${StudyInstanceUID}/series/${SeriesInstanceUID}`;
 
       try {
         // Получаем zip
@@ -75,14 +75,12 @@ export default function getCommandsModule({ servicesManager, commandsManager, ex
         // Добавляем точки в тело запроса
         formData.append('measurements', JSON.stringify(measurementData));
 
-        // https://httpbin.org/post
-        // http://127.0.0.1:8000/generate_mpr/
         uiNotificationService.show({
           title: 'Points sent to the server',
           type: 'info',
         });
         const response = await fetch(
-          `${window.location.protocol}//${window.location.hostname}:8000/reconstruct`,
+          `/api/reconstruct`,
           {
             method: 'POST',
             body: formData,

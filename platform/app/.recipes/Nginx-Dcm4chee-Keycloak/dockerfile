@@ -1,5 +1,6 @@
+# syntax=docker/dockerfile:1.7-labs
 # Stage 1: Build the application
-FROM node:20.18.1-slim as builder
+FROM node:20.18.1-slim AS builder
 
 # Setup the working directory
 RUN mkdir /usr/src/app
@@ -8,15 +9,25 @@ WORKDIR /usr/src/app
 # Install dependencies
 RUN apt-get update && apt-get install -y build-essential python3
 
-# Copy the entire project
-COPY ./ /usr/src/app/
+RUN npm install -g bun
+RUN npm install -g lerna@7.4.2
+ENV PATH=/usr/src/app/node_modules/.bin:$PATH
 
-# Install node dependencies
+COPY package.json yarn.lock lerna.json preinstall.js ./
+COPY --parents ./addOns/package.json ./addOns/*/*/package.json ./extensions/*/package.json ./modes/*/package.json ./platform/*/package.json ./
+# COPY custom_extensions/curved_mpr_extension/package.json ./custom_extensions/curved_mpr_extension/package.json
+
 RUN yarn config set workspaces-experimental true
 RUN yarn install
 
+# Copy the entire project
+COPY ./ /usr/src/app/
+
+
 # Set the environment for the build
 ENV APP_CONFIG=config/docker-nginx-dcm4chee-keycloak.js
+
+RUN yarn run cli link-extension ./custom_extensions/curved_mpr_extension
 
 # Build the application
 RUN yarn run build

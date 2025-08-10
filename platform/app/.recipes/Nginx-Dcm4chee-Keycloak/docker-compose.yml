@@ -1,14 +1,12 @@
-version: '3.8'
-
 services:
   ldap:
     image: dcm4che/slapd-dcm4chee:2.6.3-29.0
     logging:
       driver: json-file
       options:
-        max-size: "10m"
+        max-size: '10m'
     ports:
-      - "389:389"
+      - '389:389'
     env_file: docker-compose.env
     volumes:
       - ~/dcm4chee-arc/ldap:/var/lib/ldap
@@ -19,9 +17,9 @@ services:
     logging:
       driver: json-file
       options:
-        max-size: "10m"
+        max-size: '10m'
     ports:
-      - "5432:5432"
+      - '5432:5432'
     env_file: docker-compose.env
     volumes:
       - /etc/localtime:/etc/localtime:ro
@@ -33,16 +31,16 @@ services:
     logging:
       driver: json-file
       options:
-        max-size: "10m"
+        max-size: '10m'
     ports:
-      - "8080:8080"
-      - "8443:8443"
-      - "9990:9990"
-      - "9993:9993"
-      - "11112:11112"
-      - "2762:2762"
-      - "2575:2575"
-      - "12575:12575"
+      - '8080:8080'
+      - '8443:8443'
+      - '9990:9990'
+      - '9993:9993'
+      - '11112:11112'
+      - '2762:2762'
+      - '2575:2575'
+      - '12575:12575'
     env_file: docker-compose.env
     environment:
       WILDFLY_CHOWN: /opt/wildfly/standalone /storage
@@ -95,8 +93,8 @@ services:
       KC_DB_SCHEMA: public
       KC_DB_USERNAME: keycloak
       KC_DB_PASSWORD: password
-      KC_HOSTNAME_ADMIN_URL: http://YOUR_DOMAIN/keycloak/
-      KC_HOSTNAME_URL: http://YOUR_DOMAIN/keycloak/
+      KC_HOSTNAME_ADMIN_URL: http://127.0.0.1/keycloak/
+      KC_HOSTNAME_URL: http://127.0.0.1/keycloak/
       KC_HOSTNAME_STRICT_BACKCHANNEL: true
       KC_HOSTNAME_STRICT_HTTPS: false
       KC_HTTP_ENABLED: true
@@ -122,8 +120,9 @@ services:
     healthcheck:
       test:
         [
-          "CMD-SHELL",
-          "exec 3<>/dev/tcp/YOUR_DOMAIN/8080;echo -e \"GET /health/ready HTTP/1.1\r\nhost: http://localhost\r\nConnection: close\r\n\r\n\" >&3;grep \"HTTP/1.1 200 OK\" <&3"
+          'CMD-SHELL',
+          "exec 3<>/dev/tcp/127.0.0.1/8080;echo -e \"GET /health/ready HTTP/1.1\r\nhost:
+          http://localhost\r\nConnection: close\r\n\r\n\" >&3;grep \"HTTP/1.1 200 OK\" <&3",
         ]
       interval: 1s
       timeout: 5s
@@ -150,7 +149,17 @@ services:
     volumes:
       - ./config/letsencrypt:/etc/letsencrypt
       - ./config/certbot:/var/www/certbot
-    entrypoint: /bin/sh -c "trap exit TERM; while :; do certbot renew; sleep 12h & wait $${!}; done;"
+    entrypoint:
+      /bin/sh -c "trap exit TERM; while :; do certbot renew; sleep 12h & wait $${!}; done;"
+
+  cmpr_backend:
+    build:
+      context: ./../../../../curved_mpr_backend
+      dockerfile: ./dockerfile
+    container_name: curved_mpr_backend
+    ports:
+      - '8000:80'
+    restart: on-failure
 
 volumes:
   postgres_data:

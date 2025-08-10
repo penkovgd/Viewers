@@ -42,7 +42,8 @@
     "@ohif/extension-default": "3.10.4",
     "@ohif/extension-dicom-pdf": "3.10.4",
     "@ohif/extension-dicom-video": "3.10.4",
-    "@ohif/extension-measurement-tracking": "3.10.4"
+    "@ohif/extension-measurement-tracking": "3.10.4",
+    "curved_mpr_extension": "^0.0.1"
   },
   "dependencies": {
     "@babel/runtime": "^7.20.13",

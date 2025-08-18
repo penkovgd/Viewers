@@ -1,33 +1,88 @@
-from pydicom import dcmread
+from scipy.interpolate import splprep, splev, interpn
 import pydicom
-from io import BytesIO
-from typing import Any, List
-import zipfile
-from pydicom import dcmread
 import numpy as np
 from scipy.interpolate import splprep, splev
 from scipy.interpolate import interpn
 import SimpleITK as sitk
+from .models import Series
 
-'''Поменять так, чтобы можно было отсортировать в extractor'''
+
+def calculate_curve_length_3d(points):
+    """
+    Calculates the length of a 3D curve defined by a sequence of points.
+
+    Args:
+        points: A list of tuples or NumPy arrays, where each element represents
+                a 3D point (x, y, z).
+
+    Returns:
+        The total length of the 3D curve.
+    """
+    if len(points) < 2:
+        return 0.0  # A curve needs at least two points
+
+    points_array = np.array(points)
+    total_length = 0.0
+
+    for i in range(len(points_array) - 1):
+        p1 = points_array[i]
+        p2 = points_array[i+1]
+
+        # Calculate Euclidean distance between p1 and p2
+        distance = np.linalg.norm(p2 - p1)
+        total_length += distance
+
+    return total_length
 
 
-# def process_dicom_series(zip_bytes: bytes) -> List[Any]:
-#     """Обрабатывает ZIP-архив с DICOM файлами"""
-#     dicom_datasets = []
+def curved_mpr(volume, control_points, resolution=1.0, thickness=5):
+    control_points = np.array(control_points)
 
-#     with zipfile.ZipFile(BytesIO(zip_bytes)) as zip_file:
-#         dcm_files = [f for f in zip_file.namelist()
-#                      if f.lower().endswith('.dcm')]
+    tck, u = splprep(control_points.T, s=50)
+    curve_length = calculate_curve_length_3d(control_points)
+    num_points = int(np.ceil(curve_length * resolution))
+    u_new = np.linspace(0, 1, num_points)
+    curve_points = np.array(splev(u_new, tck)).T
 
-#         if not dcm_files:
-#             raise ValueError("There are no DICOM files in zip")
+    # Вычисляем первую и вторую производную
+    der1 = np.array(splev(u_new, tck, der=1)).T
+    der2 = np.array(splev(u_new, tck, der=2)).T
+    # print(der1[0], der2[0], curve_points.shape,)
 
-#         for file_name in dcm_files:
-#             with zip_file.open(file_name) as dcm_file:
-#                 dicom_datasets.append(dcmread(dcm_file))
-#     return dicom_datasets
+    reconstructed = np.zeros((num_points, thickness * 2 + 1))
 
+    for i, (pos, tangent, curvature) in enumerate(zip(curve_points, der1, der2)):
+        # print(i, (pos, tangent, curvature))
+        tangent /= (np.linalg.norm(tangent) + 1e-6)
+
+        # Нормаль = единичный вектор второго производного (направление изгиба)
+        normal = curvature / (np.linalg.norm(curvature) + 1e-6)
+        # print('norm: ', normal)
+        binormal = np.cross(tangent, normal)
+        # print('binorm: ', binormal)
+        binormal[2] = abs(binormal[2])
+        # print(binormal)
+
+        binormal /= (np.linalg.norm(binormal) + 1e-6)
+        # print('uncommon: ', binormal)
+        offsets = np.linspace(-thickness, thickness, thickness * 2 + 1)
+        plane_points = pos[:, None] + binormal[:, None] * offsets
+
+        values = interpn(
+            (np.arange(volume.shape[0]), np.arange(
+                volume.shape[1]), np.arange(volume.shape[2])),
+            volume,
+            plane_points.T,
+            method='linear',
+            bounds_error=False,
+            fill_value=0
+        )
+        reconstructed[i, :] = values
+    return reconstructed
+
+
+def transform_array(arr):
+    return [0 if x == 0 else 1 for x in arr]
 
 def change_spacing(image, new_spacing=[1., 1., 1.]):
     resample = sitk.ResampleImageFilter()
@@ -49,13 +104,18 @@ def change_spacing(image, new_spacing=[1., 1., 1.]):
     return newimage
 
 
-'''Можно обойтись без части со словарем и сортировки, а сразу перейти
-с dcm-считке, но в общем случае такая сортировка может потребоваться'''
 
+def physical_to_voxel(physical_point, spacing, origin, direction):
+    """Преобразует физические координаты в воксельные индексы
+    Физические координаты - """
+    physical_point = np.array(physical_point)
+    index_point = (np.linalg.inv(direction) @
+                   (physical_point - origin)) / spacing
+    return index_point
 
-def extractor(series_dict):
-    series_uid = max(series_dict, key=lambda k: len(series_dict[k]))
-    dicom_files = series_dict[series_uid]
+def extractor(series: Series):
+    series_uid =  series.series_uid
+    dicom_files = series.files
 
     # Сортируем файлы по InstanceNumber
     dicom_files.sort(key=lambda x: pydicom.dcmread(x).InstanceNumber)
@@ -77,95 +137,42 @@ def extractor(series_dict):
     return spacing, origin, direction, image_array
 
 
-def physical_to_voxel(physical_point, spacing, origin, direction):
-    """Преобразует физические координаты в воксельные индексы
-    Физические координаты - """
-    physical_point = np.array(physical_point)
-    index_point = (np.linalg.inv(direction) @
-                   (physical_point - origin)) / spacing
-    return index_point
 
+def reconstruction(path, coords, series: Series, shift=10):
+    ex = extractor(series)
+    result_datasets = []
+    for i in range(-shift, shift+1):
+        points = [physical_to_voxel(c, ex[0], ex[1], ex[2]) for c in coords]
+        points = [[pt[2], pt[1], pt[0]] for pt in points]
+        ds = pydicom.dcmread(path)
 
-def curved_mpr(volume, control_points, resolution=1.0, thickness=5):
-    control_points = np.array(control_points)
+        std = np.std(points, axis=0)
+        std = transform_array(std)
+        for j in range(len(points)):
+            points[j][0] += i*std[0]
+            points[j][1] += i*std[1]
+            points[j][2] += i*std[2]
+        new_img = curved_mpr(ex[3], points, resolution=1.0, thickness=80)
+        ni = (new_img-np.min(new_img))/(np.max(new_img)-np.min(new_img))
+        ni = ni * np.max(ds.pixel_array)+500
+        ni = ni.astype(np.int16)
+        print(ds.Rows, ds.Columns, ni.shape)
+        pydicom.pixels.set_pixel_data(ds, ni, photometric_interpretation='MONOCHROME2',
+                                      bits_stored=16)
+        ds.Rows, ds.Columns = ni.shape
+        ds.PixelSpacing = [1, 1]
+        ds.InstanceNumber = f'{i+shift}'
+        ds.SeriesInstanceUID = 'curvedmprseries'
+        ds.SeriesDescription = 'CMPR'
 
-    tck, u = splprep(control_points.T, s=50)
-    num_points = int(np.ceil(np.max(volume.shape) * resolution))
-    u_new = np.linspace(0, 1, num_points)
-    curve_points = np.array(splev(u_new, tck)).T
+        # Сохрянять серию на диск для работы эндпоинта не обязательно
+        # ds.save_as(f'abc{i+shift}.dcm', write_like_original=False)
 
-    # Вычисляем первую и вторую производную
-    der1 = np.array(splev(u_new, tck, der=1)).T
-    der2 = np.array(splev(u_new, tck, der=2)).T
+        result_datasets.append(ds)
+    return result_datasets
 
-    reconstructed = np.zeros((num_points, thickness * 2 + 1))
-
-    for i, (pos, tangent, curvature) in enumerate(zip(curve_points, der1, der2)):
-        tangent /= (np.linalg.norm(tangent) + 1e-6)
-
-        # Нормаль = единичный вектор второго производного (направление изгиба)
-        normal = curvature / (np.linalg.norm(curvature) + 1e-6)
-        binormal = np.cross(tangent, normal)
-        binormal[2] = abs(binormal[2])
-
-        binormal /= (np.linalg.norm(binormal) + 1e-6)
-
-        offsets = np.linspace(-thickness, thickness, thickness * 2 + 1)
-        plane_points = pos[:, None] + binormal[:, None] * offsets
-
-        values = interpn(
-            (np.arange(volume.shape[0]), np.arange(
-                volume.shape[1]), np.arange(volume.shape[2])),
-            volume,
-            plane_points.T,
-            method='linear',
-            bounds_error=False,
-            fill_value=0
-        )
-        reconstructed[i, :] = values
-
-    return reconstructed
-
-
-# old
-def reconstruction(new_img, ds, coords):
-    ex = extractor()  # Коннектится с изображениями серии, по которой реконструируем
-    volume = physical_to_voxel(coords, ex[0], ex[1], ex[2])
-    new_img = curved_mpr(new_img, volume, thickness=80)
-    ni = new_img*np.max(ds.pixel_array)/np.max(new_img)
-    ni = (ni+2047-np.max(ni))-200
-    ni = ni.astype(np.int16)
-    pydicom.pixels.set_pixel_data(ds, ni, photometric_interpretation='MONOCHROME2',
-                                  bits_stored=16)
-    ds.Rows, ds.Columns = ni.shape
-    ds.PixelSpacing = [1, 1]
-    ds.InstanceNumber = '2'
-    ds.SeriesInstanceUID = 'curvedmprseries'
-    ds.SeriesDescription = 'CMPR'
-    # ds.Modality = "OT"
-    ds.save_as('abc.dcm', write_like_original=False)
-
-# new
-def reconstruct(series_dict, points):
-    spacing, origin, direction, image_array = extractor(series_dict)
-
-    volume = physical_to_voxel(points, spacing, origin, direction)
-    new_img = curved_mpr(image_array, points, thickness=80)
-
-def reconstruction(ds, coords, series_dict):
-    # Коннектится с изображениями серии, по которой реконструируем
-    ex = extractor(series_dict)
-    points = [physical_to_voxel(c, ex[0], ex[1], ex[2]) for c in coords]
-    new_img = curved_mpr(ex[3], points, thickness=80)
-    ni = new_img*np.max(ds.pixel_array)/np.max(new_img)
-    ni = (ni+3047-np.max(ni))
-    ni = ni.astype(np.int16)
-    pydicom.pixels.set_pixel_data(ds, ni, photometric_interpretation='MONOCHROME2',
-                                  bits_stored=16)
-    ds.Rows, ds.Columns = ni.shape
-    ds.PixelSpacing = [1, 1]
-    ds.InstanceNumber = '2'
-    ds.SeriesInstanceUID = 'curvedmprseries'
-    ds.SeriesDescription = 'CMPR'
-    # ds.Modality = "OT"
-    ds.save_as('abc3.dcm', write_like_original=False)
+# Обрати внимание, что извлечение данных я вернул в reconstruction(), и
+# теперь первым параметром там path - путь к базовому файлу.
+# Также имя результирующего файла больше не переменная, они пронумерованы
+# В таком виде, т.е. весь набор результирующих файлов, нужно
+# резуультат загружать на вьюер

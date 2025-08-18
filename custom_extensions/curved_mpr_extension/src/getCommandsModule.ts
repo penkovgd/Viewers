@@ -1,4 +1,5 @@
 import { DicomMetadataStore, utils } from '@ohif/core';
+import JSZip from 'jszip';
 
 export default function getCommandsModule({ servicesManager, commandsManager, extensionManager }) {
   const { measurementService, uiNotificationService } = servicesManager.services;
@@ -78,9 +79,37 @@ export default function getCommandsModule({ servicesManager, commandsManager, ex
           throw new Error(`Backend error: ${response.status} ${response.statusText}`);
         }
 
-        // Сохраняем .dcm от бекенда
+        // Сохраняем реконструкцию
         const arrayBuffer = await response.arrayBuffer();
-        await dataSource.store.dicom(arrayBuffer); // ничего не возвращает, к сожалению
+        const zip: JSZip = await JSZip.loadAsync(arrayBuffer);
+
+        let loadedCount = 0;
+
+        const uploadPromises: Promise<void>[] = [];
+
+        zip.forEach((relativePath: string, zipEntry: JSZip.JSZipObject) => {
+          if (zipEntry.dir) {
+            return;
+          }
+          uploadPromises.push(
+            zipEntry
+              .async('arraybuffer')
+              .then(fileBuffer => {
+                return dataSource.store.dicom(fileBuffer).then(() => {
+                  loadedCount++;
+                  console.log(`File ${relativePath} loaded`);
+                });
+              })
+              .catch(error => {
+                console.error(`Failed to load ${relativePath}:`, error);
+              })
+          );
+        });
+
+        await Promise.all(uploadPromises);
+        console.log(`Successfuly loaded ${loadedCount} DICOM files`);
+
+        // await dataSource.store.dicom(arrayBuffer); // ничего не возвращает, к сожалению
 
         const promiseId = 'Dcm4chee:' + StudyInstanceUID; // пересмотреть
         dataSource.deleteStudyMetadataPromise(promiseId);

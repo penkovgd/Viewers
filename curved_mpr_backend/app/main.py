@@ -1,19 +1,14 @@
 from io import BytesIO
 import io
 import json
-import os
-import tempfile
+from pathlib import Path
 import zipfile
 from fastapi import FastAPI, Form, HTTPException, UploadFile, File, Response
-from fastapi.responses import FileResponse
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
 from pydicom import dcmread, dcmwrite
 import SimpleITK as sitk
-import pydicom
-from app.processing import change_spacing, physical_to_voxel, curved_mpr
-import numpy as np
-import uuid
+from .models import Series
+from .processing import reconstruction
 
 app = FastAPI(root_path="/api")
 
@@ -26,18 +21,15 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# class MeasurementModel(BaseModel):
-#     points: list[list[float]]
+@app.get("/hello")
+def read_hello():
+    return {"Hello": "World"}
 
 def dataset_to_bytes(ds) -> bytes:
     buffer = BytesIO()
     dcmwrite(buffer, ds)
     buffer.seek(0)
     return buffer.getvalue()
-
-@app.get("/hello")
-def read_hello():
-    return {"Hello": "World"}
 
 @app.post("/reconstruct")
 async def generate_mpr(file: UploadFile = File(...),
@@ -49,75 +41,77 @@ async def generate_mpr(file: UploadFile = File(...),
     except json.JSONDecodeError:
         return HTTPException(status_code=400, detail="measurements must be valid JSON")
 
-    # сохраняем zip
+    if not all([m.get('referenceSeriesUID') for m in measurements]):
+        return HTTPException(status_code=400, detail="measurements does not belong to one series")
+
+    series_uid_from_measurements = measurements[0].get('referenceSeriesUID')
+
+    # проверяем, что файл действительно zip
     if not file.filename.lower().endswith(".zip"):
         raise HTTPException(status_code=400, detail=".zip file required")
 
+    # читаем файл и проверяем еще раз
     contents = await file.read()
     try:
         z = zipfile.ZipFile(io.BytesIO(contents), 'r')
     except zipfile.BadZipFile:
         raise HTTPException(status_code=400, detail="Bad zip file")
 
-    with tempfile.TemporaryDirectory() as tmpdir:
-        for zip_info in z.infolist():
-            if zip_info.is_dir():
-                continue
-            zip_info.filename = os.path.basename(zip_info.filename)
-        dcm_files_infolist = [zip_info for zip_info in z.infolist() if zip_info.filename.lower().endswith('.dcm')]
+    target_extract_dir = Path('./data/' + series_uid_from_measurements)
+    for file_info in z.infolist():
+        if not file_info.is_dir():
+            orig_name = Path(file_info.filename).name
+            file_info.filename = orig_name
+            z.extract(file_info, path=target_extract_dir)
 
-        z.extractall(tmpdir, dcm_files_infolist)
+    series_reader = sitk.ImageSeriesReader()
+    try:
+        series_uids = series_reader.GetGDCMSeriesIDs(target_extract_dir)
+    except RuntimeError:
+        raise HTTPException(status_code=400, detail="Ошибка чтения DICOM-файлов: возможно, папка пуста или содержит не-DICOM файлы")
 
-        reader = sitk.ImageSeriesReader()
-        series_uids = reader.GetGDCMSeriesIDs(tmpdir)
-        if not series_uids:
-            raise HTTPException(status_code=400, detail="zip does not contain a valid DICOM series")
-        if len(series_uids) > 1:
-            raise HTTPException(status_code=400, detail="zip contains more than 1 DICOM series")
-        series_uid = series_uids[0]
+    if len(series_uids) == 0:
+        raise HTTPException(status_code=400, detail="Не найдено ни одной DICOM-серии в указанной папке")
 
-        series_file_names = reader.GetGDCMSeriesFileNames(tmpdir, series_uid)
+    if len(series_uids) > 1:
+        raise HTTPException(status_code=400, detail=f"Обнаружено {len(series_uids)} серий! Ожидалась 1 серия. UID: {series_uids}")
 
-        # ---------extractor-----------------
-        reader.SetFileNames(series_file_names)
-        image = reader.Execute()
-        image = change_spacing(image)
+    series_uid_from_series = series_uids[0]
 
-        # Получаем метаданные изображения
-        spacing = np.array(image.GetSpacing())
-        origin = np.array(image.GetOrigin())
-        direction = np.array(image.GetDirection()).reshape(3, 3)
+    if series_uid_from_measurements != series_uid_from_series:
+        raise HTTPException(status_code=400, detail=f"Series uid из measurements не совпадает с series uid из самой серии")
 
-        # Преобразуем SimpleITK изображение в numpy массив
-        image_array = sitk.GetArrayFromImage(image)
-        # image_array = image_array.astype(float)
+    series_uid = series_uid_from_measurements
 
+    dcm_files = list(series_reader.GetGDCMSeriesFileNames(target_extract_dir, series_uid_from_series))
 
-        # ----ds-----
-        ds = pydicom.dcmread(series_file_names[0])
-        #---------reconstruct------------
-        coords = [p for m in measurements for p in m['points']]
-        points = [physical_to_voxel(c, spacing, origin, direction) for c in coords]
-        points = [[pt[2], pt[1], pt[0]] for pt in points]
-        new_img = curved_mpr(image_array, points, thickness=80)
-        ni = (new_img-np.min(new_img))/(np.max(new_img)-np.min(new_img))
-        ni = ni * np.max(ds.pixel_array)+500
-        ni = ni.astype(np.int16)
-        pydicom.pixels.set_pixel_data(ds, ni, photometric_interpretation='MONOCHROME2',
-                                    bits_stored=16)
-        ds.Rows, ds.Columns = ni.shape
-        ds.PixelSpacing = [1, 1]
-        ds.InstanceNumber = '2'
-        # ds.SeriesInstanceUID = 'curvedmprseries'
-        ds.SeriesInstanceUID = str(uuid.uuid4())
-        ds.SeriesDescription = 'CMPR'
-        ds.save_as('abc3.dcm')
+    series = Series(series_uid=series_uid, files=dcm_files)
 
+    points = [p for m in measurements for p in m['points']]
 
-        dicom_bytes = dataset_to_bytes(ds)
+    sample_dcm_file = dcm_files[0]
 
-        return Response(
-            content=dicom_bytes,
-            media_type="application/dicom",
-            headers={"Content-Disposition": 'attachment; filename="cmpr.dcm"'}
-        )
+    reconstruction_datasets = reconstruction(path=sample_dcm_file, coords=points, series=series)
+
+    zip_buffer = io.BytesIO()
+
+    with zipfile.ZipFile(zip_buffer, 'w', zipfile.ZIP_DEFLATED) as zipf:
+        for i, ds in enumerate(reconstruction_datasets):
+            dicom_buffer = BytesIO()
+            ds.save_as(dicom_buffer, write_like_original=False)
+            dicom_buffer.seek(0)
+
+            filename = f"abc{i}.dcm"
+            zipf.writestr(filename, dicom_buffer.getvalue())
+
+    zip_buffer.seek(0)
+    series_uid = reconstruction_datasets[0].SeriesInstanceUID
+    return Response(
+        content=zip_buffer.getvalue(),
+        media_type="application/zip",
+        headers={
+            "Content-Disposition": f"attachment; filename={series_uid}.zip",
+            "X-Series-Instance-UID": series_uid,
+            "X-Number-Of-Instances": str(len(reconstruction_datasets))
+        }
+    )

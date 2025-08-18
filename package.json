@@ -10,6 +10,7 @@
       "platform/core",
       "platform/i18n",
       "extensions/*",
+      "custom_extensions/*",
       "modes/*",
       "addOns/externals/*"
     ],

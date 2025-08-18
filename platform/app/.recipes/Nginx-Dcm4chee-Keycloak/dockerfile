@@ -14,8 +14,7 @@ RUN npm install -g lerna@7.4.2
 ENV PATH=/usr/src/app/node_modules/.bin:$PATH
 
 COPY package.json yarn.lock lerna.json preinstall.js ./
-COPY --parents ./addOns/package.json ./addOns/*/*/package.json ./extensions/*/package.json ./modes/*/package.json ./platform/*/package.json ./
-# COPY custom_extensions/curved_mpr_extension/package.json ./custom_extensions/curved_mpr_extension/package.json
+COPY --parents ./addOns/package.json ./addOns/*/*/package.json ./extensions/*/package.json ./custom_extensions/*/package.json ./modes/*/package.json ./platform/*/package.json ./
 
 RUN yarn config set workspaces-experimental true
 RUN yarn install
